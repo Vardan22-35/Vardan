@@ -1,0 +1,120 @@
+import serial
+import time
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import statistics
+import pygame
+import smtplib
+from email.mime.text import MIMEText
+import winsound  # համակարգչի ներկառուցված ձայնի համար
+
+# ========== Էլ․ Փոստով Ուղարկման Ֆունկցիա ==========
+def send_email_alert(avg_score):
+    sender_email = "vardanshermazanyan01@gmail.com"
+    app_password = "qepb ybng kvly luut"
+    receiver_emails = ["vrejh.shermazanyan@mail.ru", "seyalv@gmail.com","grigherm@gmail.com",]
+
+    subject = "Սեսմիկ Տատանումներ"
+    body = (
+        f"❗ՈՒՇԱԴՐՈՒԹՅՈՒՆ❗\n"
+        f"Ձեր տեղամասում սեսմիկ տատանում է գրանցվել։\n"
+        f"Տվյալ պահին գրանցված սեսմիկ բալը՝ {avg_score}։\n"
+        f"Խնդրում ենք զգոն լինել։ Խնդիրների դեպքում զանգահարել 911։"
+    )
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = sender_email
+    msg["To"] = ", ".join(receiver_emails)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, app_password)
+            server.sendmail(sender_email, receiver_emails, msg.as_string())
+        print("✉️ Էլ.փոստով ազդանշանը ուղարկված է բոլորին")
+    except Exception as e:
+        print("⚠️ Էլ․փոստի սխալ՝", e)
+
+# ========== Ձայնային ազդանշանի կարգավորում ==========
+pygame.init()
+pygame.mixer.init()
+alarm_sound = pygame.mixer.Sound("alarm.wav")  # wav ֆայլը պետք է լինի նույն թղթապանակում
+
+# ========== Սերիական կապ ==========
+ser = serial.Serial('COM8', 9600)
+time.sleep(2)
+
+x_data, y_data, z_data = [], [], []
+
+# ========== Գույնի ֆունկցիա ըստ սեսմիկ բալի ==========
+def get_seismic_color(score):
+    if score < 2.0:
+        return 'blue'
+    elif score < 4.0:
+        return 'green'
+    elif score < 6.0:
+        return 'orange'
+    else:
+        return 'red'
+
+# ========== Գրաֆիկի կարգավորում ==========
+fig, ax = plt.subplots()
+alert_sent = False  # մեկ անգամ ուղարկելու համար
+
+def update(frame):
+    global x_data, y_data, z_data, alert_sent
+
+    try:
+        line = ser.readline().decode('utf-8').strip()
+        if not line:
+            return
+
+        parts = line.split(',')
+        if len(parts) != 3:
+            return
+
+        x, y, z = map(float, parts)
+
+        x_data.append(x)
+        y_data.append(y)
+        z_data.append(z)
+
+        if len(x_data) > 100:
+            x_data = x_data[-100:]
+            y_data = y_data[-100:]
+            z_data = z_data[-100:]
+
+        # Միջին արժեքների հաշվարկ
+        avg_score = round(statistics.mean([abs(x), abs(y), abs(z)]), 2)
+        color = get_seismic_color(avg_score)
+        print(f"Սեսմիկ բալ: {avg_score}")
+
+        # Սեսմիկ շեմի ստուգում
+        if avg_score > 6.0:
+            pygame.mixer.Sound.play(alarm_sound)
+            winsound.Beep(2000, 300)  # Beep ձայն
+            if not alert_sent:
+                send_email_alert(avg_score)
+                alert_sent = True
+        else:
+            alert_sent = False
+
+        # Պատկերում
+        ax.clear()
+        ax.plot(x_data, label='X', color='red')
+        ax.plot(y_data, label='Y', color='green')
+        ax.plot(z_data, label='Z', color='blue')
+        ax.legend(loc='upper right')
+        ax.set_title("ՇԵՆՔԻ ՍԵՍՄԱՅԻՆ ՏՎՅԱԼՆԵՐ")
+        ax.set_ylabel("Արագացում (m/s²)")
+        ax.set_xlabel("Ժամանակ")
+        ax.text(0.02, 0.95, f"Սեսմիկ բալ: {avg_score}", transform=ax.transAxes,
+                fontsize=13, verticalalignment='top', color=color,
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.7))
+
+    except Exception as e:
+        print("Սխալ:", e)
+
+ani = FuncAnimation(fig, update, interval=200, cache_frame_data=False)
+plt.tight_layout()
+plt.show()
